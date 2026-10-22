@@ -1,0 +1,27 @@
+name: Publish to AUR
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: vesktop-bun
+          pkgbuild: ./PKGBUILD
+          assets: |
+            vesktop.desktop
+            vesktop.sh
+          commit_username: ${{ github.actor }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "update from GitHub ${{ github.sha }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519
+          allow_empty_commits: false
+          force_push: false

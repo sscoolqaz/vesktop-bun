@@ -1,0 +1,71 @@
+name: Weekly release check
+
+on:
+  schedule:
+    # 18:00 UTC = noon America/Chicago during CST (winter). During CDT
+    # (roughly Mar-Nov) this fires at 1pm Central instead of noon, since
+    # GitHub Actions cron is fixed UTC and doesn't shift for DST.
+    - cron: '0 18 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bump PKGBUILD to the latest upstream release
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NEWVER="$(gh api repos/Vencord/Vesktop/releases/latest --jq .tag_name)"
+          NEWVER="${NEWVER#v}"
+          CURVER="$(grep -m1 '^pkgver=' PKGBUILD | cut -d= -f2)"
+
+          if [[ -z "$NEWVER" || "$NEWVER" == "$CURVER" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SUM="$(curl -fsSL "https://github.com/Vencord/Vesktop/archive/v${NEWVER}.tar.gz" | sha256sum | cut -d' ' -f1)"
+          sed -i "s/^pkgver=.*/pkgver=${NEWVER}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^sha256sums=('[0-9a-f]*'/sha256sums=('${SUM}'/" PKGBUILD
+          echo "newver=${NEWVER}" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        id: commit
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD
+          git commit -m "chore: update to ${{ steps.bump.outputs.newver }}"
+          git push origin main
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Pushes made with the default GITHUB_TOKEN (the "Commit and push" step
+      # above) don't trigger other workflows, so aur-publish.yml's `on: push`
+      # never fires for this bot commit. Publish inline instead of relying on
+      # that chain.
+      - name: Publish to AUR
+        if: steps.bump.outputs.changed == 'true'
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: vesktop-bun
+          pkgbuild: ./PKGBUILD
+          assets: |
+            vesktop.desktop
+            vesktop.sh
+          commit_username: ${{ github.actor }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "update from GitHub ${{ steps.commit.outputs.sha }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519
+          allow_empty_commits: false
+          force_push: false
