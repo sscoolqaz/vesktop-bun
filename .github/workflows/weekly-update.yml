@@ -11,6 +11,11 @@ on:
 permissions:
   contents: write
 
+# Shared with aur-publish.yml so two runs never push to the AUR at once.
+concurrency:
+  group: aur-publish
+  cancel-in-progress: false
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -22,6 +27,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           NEWVER="$(gh api repos/Vencord/Vesktop/releases/latest --jq .tag_name)"
           NEWVER="${NEWVER#v}"
           CURVER="$(grep -m1 '^pkgver=' PKGBUILD | cut -d= -f2)"
@@ -35,11 +41,13 @@ jobs:
           sed -i "s/^pkgver=.*/pkgver=${NEWVER}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
           sed -i "s/^sha256sums=('[0-9a-f]*'/sha256sums=('${SUM}'/" PKGBUILD
+          # Fail rather than publish if a sed matched nothing.
+          grep -qx "pkgver=${NEWVER}" PKGBUILD
+          grep -q "^sha256sums=('${SUM}'" PKGBUILD
           echo "newver=${NEWVER}" >> "$GITHUB_OUTPUT"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push
-        id: commit
         if: steps.bump.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
@@ -47,14 +55,29 @@ jobs:
           git add PKGBUILD
           git commit -m "chore: update to ${{ steps.bump.outputs.newver }}"
           git push origin main
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # Pushes made with the default GITHUB_TOKEN (the "Commit and push" step
       # above) don't trigger other workflows, so aur-publish.yml's `on: push`
-      # never fires for this bot commit. Publish inline instead of relying on
-      # that chain.
+      # never fires for this bot commit. Publish inline instead, and do it on
+      # every run, not only after a bump: the deploy action makes no commit
+      # when the AUR already matches, so this also retries a publish that
+      # failed in an earlier run.
+      # Same guard as aur-publish.yml: if main moved on while this run waited
+      # in the concurrency queue, publishing this checkout would roll back.
+      - name: Skip if main has moved on
+        id: fresh
+        run: |
+          set -euo pipefail
+          HEAD="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$HEAD" == "$(git rev-parse HEAD)" ]]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main is at $HEAD, not $(git rev-parse HEAD); skipping"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to AUR
-        if: steps.bump.outputs.changed == 'true'
+        if: steps.fresh.outputs.current == 'true'
         uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
         with:
           pkgname: vesktop-bun
@@ -65,7 +88,7 @@ jobs:
           commit_username: ${{ github.actor }}
           commit_email: ${{ secrets.AUR_EMAIL }}
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "update from GitHub ${{ steps.commit.outputs.sha }}"
+          commit_message: "update from GitHub (weekly release check)"
           ssh_keyscan_types: rsa,ecdsa,ed25519
           allow_empty_commits: false
           force_push: false

@@ -4,7 +4,7 @@ AUR package for [Vesktop](https://github.com/Vencord/Vesktop) built from the
 release source with [bun](https://bun.sh) instead of pnpm.
 
 It installs to the same paths as `vesktop` / `vesktop-bin` (`/usr/lib/vesktop`,
-launcher `vesktop`), so it provides and conflicts with both.
+launcher `vesktop`), so it provides `vesktop` and conflicts with both.
 
 ## Install
 
@@ -12,7 +12,8 @@ launcher `vesktop`), so it provides and conflicts with both.
 yay -S vesktop-bun   # or any AUR helper
 ```
 
-Extra launch flags go in `~/.config/vesktop-flags.conf`, one per line.
+Extra launch flags go in `~/.config/vesktop-flags.conf`, one per line (a line
+is passed as one argument, spaces included; lines starting with `#` are skipped).
 
 ## Building
 
